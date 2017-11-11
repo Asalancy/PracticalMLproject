@@ -1,0 +1,192 @@
+---
+title: "Prediction Assignment Writeup"
+author: "A Salancy"
+date: "November 11, 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Business Problem
+
+One thing that people regularly do is quantify how *much* of a particular activity they do, but they rarely quantify *how well they do it*. In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. This is the "classe" variable in the training set. Other variables are used to predict with. This report describes how we built the model, used cross validation, what we think the expected out of sample error is, and why we made the choices we did. We also use the prediction model to predict 20 different test cases.
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project have been very generously provided from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.  
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4y8X69116
+
+## Load Necessary Libraries
+
+The packages for the following libraries have already been installed.
+
+```{r,message=FALSE}
+library(caret)
+library(randomForest)
+library(e1071)
+library(rpart)
+library(AppliedPredictiveModeling)
+library(ElemStatLearn)
+library(gbm)
+library(lubridate)
+```
+
+## Data Acquisition
+
+```{r}
+Train_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+Test_url  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(Train_url))
+testing  <- read.csv(url(Test_url))
+```
+
+## Data Pre-processing
+
+We set a seed for reproducibility.
+
+```{r}
+set.seed(31415)
+```
+
+Note that any operations applied to the training set will need to be applied to the testing set as well.
+
+```{r}
+dim(training)
+```
+
+We're starting off with 160 variables. First, remove unnecessary columns. The first 6 columns provide user name and time stamps.
+```{r}
+training <- training[,-c(1:6)]
+testing  <- testing[,-c(1:6)]
+```
+
+Next, remove variables where more than half of the values are NA.
+```{r}
+High_NA<- sapply(training, function(x) mean(is.na(x))) > 0.5
+training <- training[, High_NA==FALSE]
+testing <- testing[, High_NA==FALSE]
+```
+
+Next, remove Near Zero Variance variables.
+```{r}
+NZV <- nearZeroVar(training)
+training <- training[, -NZV]
+testing <- testing[, -NZV]
+dim(training)
+```
+
+We're now down to 54 variables.
+
+## Model Building
+
+We now set aside data for validation, keeping 75% of the data for training. Each model below is built with the *mytrain* training data subset and cross-validated on the *myvalidate* subset.
+
+```{r}
+trainIndex = createDataPartition(training$classe,p=0.75,list=FALSE)
+mytrain = training[trainIndex,]
+myvalidate = training[-trainIndex,]
+```
+
+### Random Forest
+
+Our first model will be a random forest model. It will include 3-fold cross-validation. Note that this takes quite a while to run.
+
+```{r}
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modFitRF<- train(classe ~ ., method="rf", data=mytrain,trControl=controlRF)
+modFitRF$finalModel
+```
+
+We test the model on the validation set to understand its level of accuracy.
+
+```{r}
+predRF<-predict(modFitRF, myvalidate)
+cmRF<-confusionMatrix(predRF, myvalidate$classe)
+cmRF
+```
+
+The random forest model produces an accuracy on this validation set of over 99.8%. This is very good, but we'll check two other methods: boosting and bootstrap aggregating, or "bagging".
+
+### Boosting
+
+Note that this takes quite a while to run.
+
+```{r}
+modFitBoo<- train(classe ~ ., method="gbm", data=mytrain,verbose=FALSE)
+modFitBoo$finalModel
+```
+
+We test the model on the validation set to understand its level of accuracy.
+
+```{r}
+predBoo<-predict(modFitBoo, myvalidate)
+cmBoo<-confusionMatrix(predBoo, myvalidate$classe)
+cmBoo
+```
+
+The boosting model produces an accuracy on this validation set of 98.5%. 
+
+### Bagging
+
+Note that this takes quite a while to run.
+
+```{r}
+modFitBag<- train(classe ~ ., method="treebag", data=mytrain)
+modFitBag$finalModel
+```
+
+We test the model on the validation set to understand its level of accuracy.
+
+```{r}
+predBag<-predict(modFitBag, myvalidate)
+cmBag<-confusionMatrix(predBag, myvalidate$classe)
+cmBag
+```
+
+The bagging model produces an accuracy on this validation set of 99.6%. 
+
+### Checking Out-of-Sample Error
+
+```{r}
+OSE_Bag <- 1-sum(predBag == myvalidate$classe)/length(predBag)
+OSE_Bag
+```
+
+The out-of-sample error is extremely low in the examined case of the bagging model.
+
+## Applying Model to Test Set
+
+All three models produce very high accuracy. We'll use the bagging model on our test set.
+
+```{r}
+predBag<-predict(modFitBag, testing)
+predBag
+```
+
+### Conclusions
+
+```{r}
+length(predBag)
+table(predBag)
+```
+
+Only 35% (7 of 20) of subjects in the test case are modeled to be using proper form, as indicated by an "A" classification. The others are making the common mistakes indicated by the other classes. 
